@@ -5,6 +5,7 @@ using System.Net;
 using System.Text;
 using System.Xml.Linq;
 using InteractiveInspector;
+using static System.Net.Mime.MediaTypeNames;
 using static InteractiveInspector.Program;
 
 namespace InteractiveInspector
@@ -55,6 +56,12 @@ namespace InteractiveInspector
     </div>
     <div id='screenshotContainer' style='width:50%; overflow:auto; border:1px solid #ccc; padding:5px; box-sizing:border-box; position:relative;'>
         <img id='screenshotImg' src='{screenshotSrc}' style='max-width:100%; height:auto; cursor:pointer;' onclick='clickScreenshot(event)' />
+        <div style='margin-top:5px;'>
+            <button onclick='actionClick()'>Click</button>
+            <button onclick='actionDoubleClick()'>Double Click</button>
+            <button onclick='actionSendKeys()'>Send Keys</button>
+            <button onclick='refreshScreenshot()'>Refresh Screenshot</button>
+        </div>
     </div>
 </div>";
         }
@@ -107,6 +114,8 @@ li.selected > .node {{ background: yellow; }}
         {
             return @"
 <script>
+window.selectedElementId = null;
+
 function changeWindow(name){
     window.location = '?name=' + encodeURIComponent(name) + '&helper=' + encodeURIComponent(document.getElementById('helperSelect').value);
 }
@@ -123,6 +132,7 @@ function toggleHighlights(val){
     xhr.open('GET','/screenshot?all=' + (val?1:0), true);
     xhr.send();
 }
+
 function expandSelectedPath(selectedEl){
     document.querySelectorAll('#treeContainer ul').forEach(ul => { ul.style.display = 'none'; });
     let current = selectedEl;
@@ -137,6 +147,7 @@ function expandSelectedPath(selectedEl){
         current = current.parentElement;
     }
 }
+
 function clickScreenshot(ev){
     const img = document.getElementById('screenshotImg');
     const rect = img.getBoundingClientRect();
@@ -156,6 +167,7 @@ function clickScreenshot(ev){
                 if(el){
                     document.querySelectorAll('.node').forEach(nn=>nn.parentElement.classList.remove('selected'));
                     el.classList.add('selected');
+                    window.selectedElementId = resp.id;
                     expandSelectedPath(el);
                     el.scrollIntoView({behavior:'smooth', block:'center'});
                     var xhr2 = new XMLHttpRequest();
@@ -174,11 +186,13 @@ function clickScreenshot(ev){
     xhr.open('GET','/click?x=' + x + '&y=' + y, true);
     xhr.send();
 }
+
 document.addEventListener('DOMContentLoaded',function(){
     document.querySelectorAll('.node').forEach(function(n){
         n.onclick=function(e){
             document.querySelectorAll('.node').forEach(nn=>nn.parentElement.classList.remove('selected'));
             n.parentElement.classList.add('selected');
+            window.selectedElementId = n.parentElement.id;
             if(n.dataset.hasChildren==='1'){
                 const ul = n.parentElement.querySelector('ul');
                 if(ul) ul.style.display = (ul.style.display==='none')?'block':'none';
@@ -198,7 +212,57 @@ document.addEventListener('DOMContentLoaded',function(){
         };
     });
 });
+
+// Buttons actions
+function actionClick() {
+    if(!window.selectedElementId){ alert('Select an element first'); return; }
+    sendCommand('click', '');
+}
+function actionDoubleClick() {
+    if(!window.selectedElementId){ alert('Select an element first'); return; }
+    sendCommand('dblclick', '');
+}
+function actionSendKeys() {
+    if(!window.selectedElementId){ alert('Select an element first'); return; }
+    var text = prompt('Enter text to send:');
+    if(text !== null) sendCommand('sendkeys', text);
+}
+
+function sendCommand(cmd, text){
+    if(!window.selectedElementId) return;
+    var xhr = new XMLHttpRequest();
+    var commandStr = cmd + ' xpath=//*[@id=\""' + window.selectedElementId + '\""]';
+    if(text) commandStr += ' ' + text;
+    xhr.onreadystatechange = function(){
+        if(xhr.readyState===4 && xhr.status===200){
+            // После выполнения команды обновляем свойства и скриншот
+            var xhr2 = new XMLHttpRequest();
+            xhr2.onreadystatechange = function(){
+                if(xhr2.readyState===4 && xhr2.status===200){
+                    var resp = JSON.parse(xhr2.responseText);
+                    document.getElementById('propsContainer').innerHTML = resp.html;
+                    document.getElementById('screenshotImg').src = resp.screenshot;
+                }
+            };
+            xhr2.open('GET', '/props?id=' + encodeURIComponent(window.selectedElementId), true);
+            xhr2.send();
+        }
+    };
+    xhr.open('GET', '/console?cmd=' + encodeURIComponent(commandStr), true);
+    xhr.send();
+}
+function refreshScreenshot(){
+    var xhr = new XMLHttpRequest();
+    xhr.onreadystatechange = function(){
+        if(xhr.readyState === 4 && xhr.status === 200){
+            document.getElementById('screenshotImg').src = xhr.responseText; // Update the screenshot
+        }
+    };
+    xhr.open('GET', '/screenshot', true); // Request to refresh the screenshot
+    xhr.send();
+}
+
 </script>";
         }
-    }
+}
 }
