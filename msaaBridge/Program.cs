@@ -235,15 +235,18 @@ namespace InteractiveInspector
 
             try
             {
-                // оборачиваем XPath в case-insensitive проверку
-                var nodes = finderXml.XPathSelectElements(xpath);
-                // ищем первый элемент с совпадением без учёта регистра
+                // Преобразуем XML в строку с нижним регистром для тегов и атрибутов
+                var lowerCaseXml = ToLowerCaseXml(finderXml);
+
+                // Выполняем XPath запрос по преобразованному XML
+                var nodes = lowerCaseXml.XPathSelectElements(xpath.ToLowerInvariant());
+
+                // Находим первый элемент
                 var value = nodes.FirstOrDefault();
 
                 if (value != null) return value;
 
                 Console.WriteLine("No element found.");
-
                 return null;
             }
             catch (Exception ex)
@@ -254,6 +257,29 @@ namespace InteractiveInspector
             }
         }
 
+        static XElement ToLowerCaseXml(XElement element)
+        {
+            // Преобразуем имя текущего элемента в нижний регистр
+            var lowerCaseElement = new XElement(
+                element.Name.ToString().ToLowerInvariant(), // Имя элемента в нижнем регистре
+                element.Attributes().Select(a => new XAttribute(a.Name.ToString().ToLowerInvariant(), a.Value)) // Атрибуты в нижнем регистре
+            );
+
+            // Рекурсивно обрабатываем дочерние элементы
+            foreach (var child in element.Elements())
+            {
+                lowerCaseElement.Add(ToLowerCaseXml(child)); // Рекурсивный вызов для дочерних элементов
+            }
+
+            // Добавляем текстовое содержимое, не меняя его
+            foreach (var node in element.Nodes())
+            {
+                // Добавляем все узлы (включая текстовые узлы) в новый элемент
+                lowerCaseElement.Add(node);
+            }
+
+            return lowerCaseElement;
+        }
 
         static void ProcessConsoleCommand(string commandLine)
         {
@@ -269,11 +295,9 @@ namespace InteractiveInspector
             if (SelectedElementId == null)
             {
                 Console.WriteLine("No element selected.");
-                
             }
             else
             {
-
                 rect = currentHelper.GetBoundingRectangleRECT(SelectedElementId);
                 centerX = rect.Left + (rect.Right - rect.Left) / 2;
                 centerY = rect.Top + (rect.Bottom - rect.Top) / 2;
@@ -281,6 +305,39 @@ namespace InteractiveInspector
 
             switch (cmd)
             {
+                case "selectprocess":
+                    // Select the process by its name (process name as an argument)
+                    if (string.IsNullOrEmpty(arg))
+                    {
+                        Console.WriteLine("Usage: selectprocess <process_name>");
+                        return;
+                    }
+
+                    var windows = GetVisibleWindows();
+                    if (windows.ContainsKey(arg))
+                    {
+                        CurrentProcess = arg;
+                        CurrentTargetName = windows[CurrentProcess];
+                        Console.WriteLine($"Process selected: {CurrentProcess}");
+
+                        // Теперь получаем XML дерево для выбранного окна
+                        IntPtr hwnd = currentHelper.ResolveWindow(CurrentTargetName);
+                        XElement xml = currentHelper.DumpXml(hwnd);
+                        finderXml = ConvertToXPathXml(xml);
+
+                        // Очищаем старые данные о выделенных элементах
+                        RectIdList.Clear();
+                        CollectAllRects(xml.Elements("Element").FirstOrDefault(), false);
+
+                        Console.WriteLine("XML tree loaded for selected process.");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Process '{arg}' not found.");
+                    }
+                    break;
+
+
                 case "click":
                     if (arg.StartsWith("xpath=", StringComparison.OrdinalIgnoreCase))
                     {
@@ -315,7 +372,7 @@ namespace InteractiveInspector
                     break;
 
                 case "dblclick":
-                    if(arg.StartsWith("xpath=", StringComparison.OrdinalIgnoreCase))
+                    if (arg.StartsWith("xpath=", StringComparison.OrdinalIgnoreCase))
                     {
                         string xp = arg.Substring("xpath=".Length).Trim();
 
@@ -350,7 +407,6 @@ namespace InteractiveInspector
                 case "sendkeys":
                     if (arg.StartsWith("xpath=", StringComparison.OrdinalIgnoreCase))
                     {
-                        // xpath=... text...
                         var parts2 = arg.Split(' ', 2);
                         if (parts2.Length < 2)
                         {
@@ -397,6 +453,7 @@ namespace InteractiveInspector
                     break;
             }
         }
+
 
         private static XElement ConvertToXPathXml(XElement input)
         {
