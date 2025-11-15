@@ -447,10 +447,54 @@ namespace InteractiveInspector
                         Console.WriteLine($"Sent keys: {arg}");
                     }
                     break;
+                case "getprop":
+                    if (string.IsNullOrEmpty(arg) || !arg.Contains("xpath="))
+                    {
+                        Console.WriteLine("Usage: getprop xpath=<xpath_expression> <property_name>");
+                        return;
+                    }
+
+                    // Разделяем аргументы
+                    string[] args = arg.Split(new[] { ' ' }, 2);
+                    if (args.Length < 2)
+                    {
+                        Console.WriteLine("Usage: getprop xpath=<xpath_expression> <property_name>");
+                        return;
+                    }
+
+                    string xpath = args[0].Substring("xpath=".Length).Trim();
+                    string propertyName = args[1].Trim();
+
+                    // Находим элемент по XPath
+                    XElement element = FindByXPath(xpath);
+                    if (element == null)
+                    {
+                        Console.WriteLine("Element not found by xpath.");
+                        return;
+                    }
+
+                    // Получаем значение указанного свойства
+                    string propertyValue = GetSpecificPropertyFromXml(element, propertyName);
+                    Console.WriteLine(propertyValue);
+                    break;
 
                 default:
                     Console.WriteLine("Unknown command.");
                     break;
+            }
+        }
+
+        static string GetSpecificPropertyFromXml(XElement element, string propertyName)
+        {
+            // Ищем свойство в атрибутах элемента по имени
+            var attribute = element.Attribute(propertyName);
+            if (attribute != null)
+            {
+                return attribute.Value;
+            }
+            else
+            {
+                return $"Property '{propertyName}' not found.";
             }
         }
 
