@@ -1,4 +1,4 @@
-name: Build EXE Release (COM support)
+name: Build EXE Release
 
 on:
   push:
@@ -8,26 +8,25 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
-
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
-
       - name: Setup NuGet
         uses: NuGet/setup-nuget@v2
-
       - name: Restore NuGet packages
-        run: nuget restore msaaBridge.sln   # укажи твой solution
+        run: nuget restore WebInspect.sln
 
-      - name: Build with MSBuild (full .NET Framework)
-        run: msbuild msaaBridge.sln /p:Configuration=Release
+      - name: Build
+        run: msbuild WebInspect.sln /p:Configuration=Release
 
-      - name: Archive build output
+      - name: Create ZIP
         run: powershell Compress-Archive -Path .\msaaBridge\bin\Release\* -DestinationPath app.zip
 
-      - name: Upload to release
+      - name: Upload release
         uses: softprops/action-gh-release@v2
         with:
           files: app.zip
