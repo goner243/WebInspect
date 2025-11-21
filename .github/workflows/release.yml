@@ -18,10 +18,10 @@ jobs:
       - name: Setup NuGet
         uses: NuGet/setup-nuget@v2
       - name: Restore NuGet packages
-        run: nuget restore WebInspect.sln
+        run: nuget restore msaaBridge.sln
 
       - name: Build
-        run: msbuild WebInspect.sln /p:Configuration=Release
+        run: msbuild msaaBridge.sln /p:Configuration=Release
 
       - name: Create ZIP
         run: powershell Compress-Archive -Path .\msaaBridge\bin\Release\* -DestinationPath app.zip
