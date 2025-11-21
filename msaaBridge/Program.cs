@@ -19,6 +19,7 @@ namespace InteractiveInspector
 {
     public class Program
     {
+        //
         static string CurrentTargetName = null;
         static string CurrentProcess = null;
         static string SelectedElementId = null;
