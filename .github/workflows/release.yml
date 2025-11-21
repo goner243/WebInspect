@@ -1,4 +1,4 @@
-name: Build EXE Release
+name: Build EXE Release (COM support)
 
 on:
   push:
@@ -10,21 +10,24 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"   # укажи свою версию
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
 
-      - name: Publish EXE
-        run: dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
 
-      - name: Create ZIP
-        run: powershell Compress-Archive -Path publish/* -DestinationPath app.zip
+      - name: Restore NuGet packages
+        run: nuget restore WebInspect.sln   # укажи твой solution
 
-      - name: Upload Release
+      - name: Build with MSBuild (full .NET Framework)
+        run: msbuild WebInspect.sln /p:Configuration=Release
+
+      - name: Archive build output
+        run: powershell Compress-Archive -Path .\msaaBridge\bin\Release\* -DestinationPath app.zip
+
+      - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
           files: app.zip
