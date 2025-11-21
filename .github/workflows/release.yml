@@ -22,7 +22,7 @@ jobs:
         run: nuget restore WebInspect.sln   # укажи твой solution
 
       - name: Build with MSBuild (full .NET Framework)
-        run: msbuild WebInspect.sln /p:Configuration=Release
+        run: msbuild msaaBridge.sln /p:Configuration=Release
 
       - name: Archive build output
         run: powershell Compress-Archive -Path .\msaaBridge\bin\Release\* -DestinationPath app.zip
