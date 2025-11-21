@@ -13,6 +13,7 @@ using UIAutomationClient;
 using System.Windows.Forms;
 using System.Xml.XPath;
 using System.Diagnostics;
+using System.Text.Json;
 
 namespace InteractiveInspector
 {
@@ -21,12 +22,16 @@ namespace InteractiveInspector
         static string CurrentTargetName = null;
         static string CurrentProcess = null;
         static string SelectedElementId = null;
+
         static UiaHelper uiaHelper = new UiaHelper();
         static MsaaHelper msaaHelper = new MsaaHelper();
         static IHelper currentHelper = uiaHelper;
+
         static RECT CurrentWindowRect;
         static List<(RECT Rect, string Id)> RectIdList = new List<(RECT, string)>();
+
         static bool ShowAllHighlights = false;
+
         static XElement finderXml;
 
         [StructLayout(LayoutKind.Sequential)]
@@ -37,7 +42,7 @@ namespace InteractiveInspector
             IntPtr ResolveWindow(string windowName);
             XElement DumpXml(IntPtr hwnd);
             string GetElementProperties(string elementId);
-            Program.RECT GetBoundingRectangleRECT(string elementId);
+            RECT GetBoundingRectangleRECT(string elementId);
         }
         [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd, out RECT lpRect);
         [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr hwnd, IntPtr hDC, uint nFlags);
@@ -63,6 +68,8 @@ namespace InteractiveInspector
         static Dictionary<string, string> GetVisibleWindows()
         {
             var windows = new Dictionary<string, string>();
+
+            Log("Trying to get active windows");
 
             EnumWindows((hWnd, lParam) =>
             {
@@ -109,6 +116,7 @@ namespace InteractiveInspector
 
         static string CaptureWindow(IntPtr hwnd, RECT? highlightRect = null, List<RECT> allRects = null)
         {
+            Log($"Trying to capture screenshot of {hwnd.ToString()}.");
             if (hwnd == IntPtr.Zero) return "";
             try
             {
@@ -144,9 +152,16 @@ namespace InteractiveInspector
 
                 using MemoryStream ms = new MemoryStream();
                 bmp.Save(ms, ImageFormat.Png);
+
+                Log($"Window {hwnd.ToString()} captured.");
+
                 return "data:image/png;base64," + Convert.ToBase64String(ms.ToArray());
             }
-            catch { return ""; }
+            catch 
+            {
+                Log($"Failed to capture {hwnd.ToString()}.", ConsoleColor.Red);
+                return ""; 
+            }
         }
 
         static void CollectAllRects(XElement element, bool orderTopDown)
@@ -166,66 +181,90 @@ namespace InteractiveInspector
             }
         }
 
-        static void ClickAt(int x, int y)
+        static bool ClickAt(int x, int y)
         {
-            // Сохраняем текущее положение курсора
-            Point originalPos = Cursor.Position;
-
-            // Сохраняем текущее активное окно
-            IntPtr foregroundHwnd = GetForegroundWindow();
-
-            IntPtr hwnd = currentHelper.ResolveWindow(CurrentTargetName);
-            if (hwnd != IntPtr.Zero) SetForegroundWindow(hwnd);
-            Thread.Sleep(50);
-
-            // Перемещаем курсор и кликаем
-            Cursor.Position = new Point(x, y);
-            mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
-            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
-
-            Thread.Sleep(50);
-
-            // Возвращаем курсор на исходное место
-            Cursor.Position = originalPos;
-
-            // Возвращаем фокус на предыдущее окно
-            if (foregroundHwnd != IntPtr.Zero)
-                SetForegroundWindow(foregroundHwnd);
-        }
-
-        static void DoubleClickAt(int x, int y)
-        {
-            ClickAt(x, y);
-            Thread.Sleep(100);
-            ClickAt(x, y);
-        }
-
-        static void SendKeysString(string text)
-        {
-            Point originalPos = Cursor.Position;
-            IntPtr foregroundHwnd = GetForegroundWindow();
-
-            IntPtr hwnd = currentHelper.ResolveWindow(CurrentTargetName);
-            if (hwnd != IntPtr.Zero) SetForegroundWindow(hwnd);
-            Thread.Sleep(50);
-
-            foreach (char c in text)
+            try
             {
-                short vkey = VkKeyScan(c);
-                byte vk = (byte)(vkey & 0xFF);
-                bool shift = (vkey & 0x0100) != 0;
+                // Сохраняем текущее положение курсора
+                Point originalPos = Cursor.Position;
 
-                if (shift) keybd_event(0x10, 0, KEYEVENTF_KEYDOWN, UIntPtr.Zero); // SHIFT down
-                keybd_event(vk, 0, KEYEVENTF_KEYDOWN, UIntPtr.Zero);
-                keybd_event(vk, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
-                if (shift) keybd_event(0x10, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);   // SHIFT up
+                // Сохраняем текущее активное окно
+                IntPtr foregroundHwnd = GetForegroundWindow();
 
-                Thread.Sleep(5);
+                IntPtr hwnd = currentHelper.ResolveWindow(CurrentTargetName);
+                if (hwnd != IntPtr.Zero) SetForegroundWindow(hwnd);
+                Thread.Sleep(50);
+
+                // Перемещаем курсор и кликаем
+                Cursor.Position = new Point(x, y);
+                mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
+                mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
+
+                Thread.Sleep(50);
+
+                // Возвращаем курсор на исходное место
+                Cursor.Position = originalPos;
+
+                // Возвращаем фокус на предыдущее окно
+                if (foregroundHwnd != IntPtr.Zero)
+                    SetForegroundWindow(foregroundHwnd);
+                return true;
             }
+            catch
+            {
+                return false;
+            }
+        }
 
-            Cursor.Position = originalPos;
-            if (foregroundHwnd != IntPtr.Zero)
-                SetForegroundWindow(foregroundHwnd);
+        static bool DoubleClickAt(int x, int y)
+        {
+            try
+            {
+                ClickAt(x, y);
+                Thread.Sleep(100);
+                ClickAt(x, y);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        static bool SendKeysString(string text)
+        {
+            try
+            {
+                Point originalPos = Cursor.Position;
+                IntPtr foregroundHwnd = GetForegroundWindow();
+
+                IntPtr hwnd = currentHelper.ResolveWindow(CurrentTargetName);
+                if (hwnd != IntPtr.Zero) SetForegroundWindow(hwnd);
+                Thread.Sleep(50);
+
+                foreach (char c in text)
+                {
+                    short vkey = VkKeyScan(c);
+                    byte vk = (byte)(vkey & 0xFF);
+                    bool shift = (vkey & 0x0100) != 0;
+
+                    if (shift) keybd_event(0x10, 0, KEYEVENTF_KEYDOWN, UIntPtr.Zero); // SHIFT down
+                    keybd_event(vk, 0, KEYEVENTF_KEYDOWN, UIntPtr.Zero);
+                    keybd_event(vk, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                    if (shift) keybd_event(0x10, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);   // SHIFT up
+
+                    Thread.Sleep(5);
+                }
+
+                Cursor.Position = originalPos;
+                if (foregroundHwnd != IntPtr.Zero)
+                    SetForegroundWindow(foregroundHwnd);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
 
@@ -246,13 +285,13 @@ namespace InteractiveInspector
 
                 if (value != null) return value;
 
-                Console.WriteLine("No element found.");
+                Log("No element found.");
                 return null;
             }
             catch (Exception ex)
             {
                 // Для отладки можно раскомментировать:
-                Console.WriteLine("XPath error: " + ex.Message);
+                Log("XPath error: " + ex.Message);
                 return null;
             }
         }
@@ -281,10 +320,27 @@ namespace InteractiveInspector
             return lowerCaseElement;
         }
 
-        static void ProcessConsoleCommand(string commandLine)
+        static void Log(string message, ConsoleColor color = ConsoleColor.White)
         {
+            Console.ForegroundColor = color;
+            Console.WriteLine(DateTime.Now.ToString() + ": " + message);
+
+            Console.ResetColor();
+        }
+
+        static string ProcessConsoleCommand(string commandLine)
+        {
+
+            string response = "FAILED";
+
+            if (string.IsNullOrEmpty(CurrentProcess) && !commandLine.ToLower().Contains("selectprocess"))
+            {
+                Log("No process selected.", ConsoleColor.Red);
+                return response;
+            }
+
             string[] parts = commandLine.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 0) return;
+            if (parts.Length == 0) return response;
             string cmd = parts[0].ToLowerInvariant();
             string arg = parts.Length > 1 ? parts[1] : "";
 
@@ -294,7 +350,7 @@ namespace InteractiveInspector
 
             if (SelectedElementId == null)
             {
-                Console.WriteLine("No element selected.");
+                Log("No element selected.", ConsoleColor.Yellow);
             }
             else
             {
@@ -309,8 +365,8 @@ namespace InteractiveInspector
                     // Select the process by its name (process name as an argument)
                     if (string.IsNullOrEmpty(arg))
                     {
-                        Console.WriteLine("Usage: selectprocess <process_name>");
-                        return;
+                        Log("Usage: selectprocess <process_name>", ConsoleColor.Green);
+                        return response;
                     }
 
                     var windows = GetVisibleWindows();
@@ -318,7 +374,7 @@ namespace InteractiveInspector
                     {
                         CurrentProcess = arg;
                         CurrentTargetName = windows[CurrentProcess];
-                        Console.WriteLine($"Process selected: {CurrentProcess}");
+                        Log($"Process selected: {CurrentProcess}");
 
                         // Теперь получаем XML дерево для выбранного окна
                         IntPtr hwnd = currentHelper.ResolveWindow(CurrentTargetName);
@@ -329,11 +385,12 @@ namespace InteractiveInspector
                         RectIdList.Clear();
                         CollectAllRects(xml.Elements("Element").FirstOrDefault(), false);
 
-                        Console.WriteLine("XML tree loaded for selected process.");
+                        Log("XML tree loaded for selected process.");
+                        response = "OK";
                     }
                     else
                     {
-                        Console.WriteLine($"Process '{arg}' not found.");
+                        Log($"Process '{arg}' not found.", ConsoleColor.Red);
                     }
                     break;
 
@@ -346,28 +403,49 @@ namespace InteractiveInspector
                         XElement node = FindByXPath(xp);
                         if (node == null)
                         {
-                            Console.WriteLine("Element not found by xpath.");
-                            return;
+                            Log($"Element not found by {xp}", ConsoleColor.Red);
+                            return response;
+                        }
+                        else
+                        {
+                            Log($"Element found by {xp}");
                         }
 
                         string id = node.Attribute("id")?.Value;
                         if (id == null)
                         {
-                            Console.WriteLine("XPath node has no id.");
-                            return;
+                            Log("XPath node has no id.", ConsoleColor.Red);
+                            return response;
                         }
 
                         RECT r = currentHelper.GetBoundingRectangleRECT(id);
                         int cx = r.Left + (r.Right - r.Left) / 2;
                         int cy = r.Top + (r.Bottom - r.Top) / 2;
 
-                        ClickAt(cx, cy);
-                        Console.WriteLine($"Click by xpath OK: {xp}");
+                        var res = ClickAt(cx, cy);
+                        if (res)
+                        {
+                            Log($"Click by xpath OK: {xp}");
+                            response = "OK";
+                        }
+                        else
+                        {
+                            Log("Failed to click element.", ConsoleColor.Red);
+                            response = "FAILED";
+                        }
                     }
                     else
                     {
-                        ClickAt(centerX, centerY);
-                        Console.WriteLine("Click performed.");
+                        var res = ClickAt(centerX, centerY);
+                        if (res)
+                        {
+                            Log("Click performed.");
+                            response = "OK";
+                        }
+                        else
+                        {
+                            Log("Failed to click element.", ConsoleColor.Red);
+                        }
                     }
                     break;
 
@@ -379,28 +457,48 @@ namespace InteractiveInspector
                         XElement node = FindByXPath(xp);
                         if (node == null)
                         {
-                            Console.WriteLine("Element not found by xpath.");
-                            return;
+                            Log($"Element not found by {xp}.", ConsoleColor.Red);
+                            return response;
+                        }
+                        else
+                        {
+                            Log($"Element found by {xp}.");
                         }
 
                         string id = node.Attribute("id")?.Value;
                         if (id == null)
                         {
-                            Console.WriteLine("XPath node has no id.");
-                            return;
+                            Log("XPath node has no id.");
+                            return response;
                         }
 
                         RECT r = currentHelper.GetBoundingRectangleRECT(id);
                         int cx = r.Left + (r.Right - r.Left) / 2;
                         int cy = r.Top + (r.Bottom - r.Top) / 2;
 
-                        DoubleClickAt(cx, cy);
-                        Console.WriteLine($"DoubleClick by xpath OK: {xp}");
+                        var res = DoubleClickAt(cx, cy);
+                        if (res)
+                        {
+                            Log($"DoubleClick by xpath OK: {xp}");
+                            response = "OK";
+                        }
+                        else
+                        {
+                            Log("Failed to doubleClick element.", ConsoleColor.Red);
+                        }
                     }
                     else
                     {
-                        DoubleClickAt(centerX, centerY);
-                        Console.WriteLine("DoubleClick performed.");
+                        var res = DoubleClickAt(centerX, centerY);
+                        if (res)
+                        {
+                            Log($"DoubleClick OK");
+                            response = "OK";
+                        }
+                        else
+                        {
+                            Log("Failed to doubleClick element.", ConsoleColor.Red);
+                        }
                     }
                     break;
 
@@ -410,8 +508,8 @@ namespace InteractiveInspector
                         var parts2 = arg.Split(' ', 2);
                         if (parts2.Length < 2)
                         {
-                            Console.WriteLine("Usage: sendkeys xpath=... text");
-                            return;
+                            Log("Usage: sendkeys xpath=... text", ConsoleColor.Green);
+                            return response;
                         }
 
                         string xp = parts2[0].Substring("xpath=".Length);
@@ -420,15 +518,19 @@ namespace InteractiveInspector
                         XElement node = FindByXPath(xp);
                         if (node == null)
                         {
-                            Console.WriteLine("Element not found by xpath.");
-                            return;
+                            Log($"Element not found by {xp}.", ConsoleColor.Red);
+                            return response;
+                        }
+                        else
+                        {
+                            Log($"Element found by {xp}.");
                         }
 
                         string id = node.Attribute("id")?.Value;
                         if (id == null)
                         {
-                            Console.WriteLine("XPath node has no id.");
-                            return;
+                            Log("XPath node has no id.");
+                            return response;
                         }
 
                         RECT r = currentHelper.GetBoundingRectangleRECT(id);
@@ -437,29 +539,45 @@ namespace InteractiveInspector
 
                         ClickAt(cx, cy);
                         Thread.Sleep(120);
-                        SendKeysString(text);
+                        var res = SendKeysString(text);
+                        if (res)
+                        {
+                            Log($"sendkeys by xpath OK: {xp}");
+                            response = "OK";
+                        }
+                        else
+                        {
+                            Log($"Failed sendkeys by xpath: {xp}", ConsoleColor.Red);
+                        }
 
-                        Console.WriteLine($"sendkeys by xpath OK: {xp}");
                     }
                     else
                     {
-                        SendKeysString(arg);
-                        Console.WriteLine($"Sent keys: {arg}");
+                        var res = SendKeysString(arg);
+                        if (res)
+                        {
+                            Log($"sendkeys OK.");
+                            response = "OK";
+                        }
+                        else
+                        {
+                            Log($"Failed sendkeys by xpath.", ConsoleColor.Red);
+                        }
                     }
                     break;
                 case "getprop":
                     if (string.IsNullOrEmpty(arg) || !arg.Contains("xpath="))
                     {
-                        Console.WriteLine("Usage: getprop xpath=<xpath_expression> <property_name>");
-                        return;
+                        Log("Usage: getprop xpath=<xpath_expression> <property_name>", ConsoleColor.Green);
+                        return response;
                     }
 
                     // Разделяем аргументы
                     string[] args = arg.Split(new[] { ' ' }, 2);
                     if (args.Length < 2)
                     {
-                        Console.WriteLine("Usage: getprop xpath=<xpath_expression> <property_name>");
-                        return;
+                        Log("Usage: getprop xpath=<xpath_expression> <property_name>", ConsoleColor.Green);
+                        return response;
                     }
 
                     string xpath = args[0].Substring("xpath=".Length).Trim();
@@ -469,19 +587,52 @@ namespace InteractiveInspector
                     XElement element = FindByXPath(xpath);
                     if (element == null)
                     {
-                        Console.WriteLine("Element not found by xpath.");
-                        return;
+                        Log($"Element not found by {xpath}.");
+                        return response;
                     }
 
                     // Получаем значение указанного свойства
                     string propertyValue = GetSpecificPropertyFromXml(element, propertyName);
-                    Console.WriteLine(propertyValue);
+                    if (propertyValue != "fail")
+                    {
+                        Log(propertyValue); 
+                        response = propertyValue;
+                    }
+                    else
+                    {
+                        Log($"Failed to get property {propertyName}", ConsoleColor.Red);
+                    }
                     break;
 
+                case "find":
+                    if (arg.StartsWith("xpath=", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string xp = arg.Substring("xpath=".Length).Trim();
+
+                        XElement node = FindByXPath(xp);
+                        
+                        if(node != null)
+                        {
+                            Log($"Elemeent {xp} found");
+                            response = "OK";
+                        }
+                        else
+                        {
+                            Log($"Elemeent {xp} not found", ConsoleColor.Red);
+                        }
+                        
+                    }
+                    else
+                    {
+                        Log("Usage: find xpath=<xpath_expression>", ConsoleColor.Green);
+                    }
+                    break;
                 default:
-                    Console.WriteLine("Unknown command.");
+                    Log("Unknown command.", ConsoleColor.Red);
                     break;
             }
+
+            return response;
         }
 
         static string GetSpecificPropertyFromXml(XElement element, string propertyName)
@@ -494,7 +645,7 @@ namespace InteractiveInspector
             }
             else
             {
-                return $"Property '{propertyName}' not found.";
+                return $"fail";
             }
         }
 
@@ -527,13 +678,12 @@ namespace InteractiveInspector
 
         static void Main()
         {
-            // HTTP сервер (без изменений)
             new Thread(() =>
             {
                 HttpListener listener = new HttpListener();
                 listener.Prefixes.Add("http://localhost:5050/");
                 listener.Start();
-                Console.WriteLine("Inspector running at http://localhost:5050");
+                Log("Inspector running at http://localhost:5050");
 
                 while (true)
                 {
@@ -550,7 +700,7 @@ namespace InteractiveInspector
                         if (string.IsNullOrEmpty(CurrentTargetName) && windows.Count > 0)
                             CurrentTargetName = windows.Values.First();
                         if (string.IsNullOrEmpty(CurrentProcess) && windows.Count > 0)
-                            windows.Keys.First();
+                            CurrentProcess = windows.Keys.First();
 
                         if (qs.TryGetValue("name", out string target)) CurrentProcess = target;
                         CurrentTargetName = windows[CurrentProcess];
@@ -559,8 +709,11 @@ namespace InteractiveInspector
 
                         IntPtr hwnd = currentHelper.ResolveWindow(CurrentTargetName);
 
+                        Log($"Current window: {CurrentTargetName} \r\nCurrent process: {CurrentProcess} \r\nWindow HEX value: {hwnd.ToString()}");
+
                         if (req.Url.AbsolutePath.Equals("/inspect", StringComparison.OrdinalIgnoreCase))
                         {
+                            Log("Main page request.");
                             XElement xml = currentHelper.DumpXml(hwnd);
                             finderXml = ConvertToXPathXml(xml);
                             RectIdList.Clear();
@@ -572,12 +725,18 @@ namespace InteractiveInspector
                             resp.ContentType = "text/html; charset=utf-8";
                             resp.OutputStream.Write(buf, 0, buf.Length);
                             resp.Close();
+                            Log("Main page successfuly loaded.");
                         }
                         else if (req.Url.AbsolutePath.Equals("/props", StringComparison.OrdinalIgnoreCase))
                         {
+                            Log($"Props request.");
+
                             if (qs.TryGetValue("id", out string id))
                             {
                                 SelectedElementId = id;
+
+                                Log($"Props request id: {id}.");
+
                                 string propsHtml = currentHelper.GetElementProperties(id);
                                 RECT highlightRect = currentHelper.GetBoundingRectangleRECT(id);
                                 string screenshotSrc = CaptureWindow(hwnd, highlightRect, RectIdList.Select(t => t.Rect).ToList());
@@ -587,7 +746,11 @@ namespace InteractiveInspector
                                 resp.OutputStream.Write(buf2, 0, buf2.Length);
                                 resp.Close();
                             }
-                            else { resp.StatusCode = 400; resp.Close(); }
+                            else 
+                            {
+                                Log($"Failed to get properties.", ConsoleColor.Red);
+                                resp.StatusCode = 400; resp.Close(); 
+                            }
                         }
                         else if (req.Url.AbsolutePath.Equals("/screenshot", StringComparison.OrdinalIgnoreCase))
                         {
@@ -600,8 +763,12 @@ namespace InteractiveInspector
                         }
                         else if (req.Url.AbsolutePath.Equals("/click", StringComparison.OrdinalIgnoreCase))
                         {
+                            Log($"Element request.");
+
                             if (!qs.TryGetValue("x", out string sx) || !qs.TryGetValue("y", out string sy))
                             {
+                                Log($"Failed to get element", ConsoleColor.Red);
+
                                 resp.StatusCode = 400;
                                 resp.Close();
                             }
@@ -626,6 +793,8 @@ namespace InteractiveInspector
                                     }
                                 }
 
+                                Log($"Found element {foundId}.");
+
                                 string screenshotSrc = CaptureWindow(hwnd, highlight, RectIdList.Select(t => t.Rect).ToList());
                                 string json = $"{{\"id\":{(foundId == null ? "null" : System.Text.Json.JsonSerializer.Serialize(foundId))},\"screenshot\":\"{screenshotSrc}\"}}";
                                 byte[] buf = Encoding.UTF8.GetBytes(json);
@@ -638,12 +807,14 @@ namespace InteractiveInspector
                         {
                             if (qs.TryGetValue("cmd", out string command))
                             {
+                                string response = "FAILED";
+
                                 if (!string.IsNullOrEmpty(command))
                                 {
-                                    ProcessConsoleCommand(command);
+                                    response = ProcessConsoleCommand(command);
                                 }
                                 resp.StatusCode = 200;
-                                byte[] buf = Encoding.UTF8.GetBytes("OK");
+                                byte[] buf = Encoding.UTF8.GetBytes(response);
                                 resp.OutputStream.Write(buf, 0, buf.Length);
                                 resp.Close();
                             }
@@ -660,14 +831,14 @@ namespace InteractiveInspector
                             else { resp.StatusCode = 404; resp.Close(); }
                         }
                     }
-                    catch (Exception ex) { Console.WriteLine("Error: " + ex); }
+                    catch (Exception ex) { Log("Error: " + ex); }
                 }
             }).Start();
 
             // Консольный ввод в отдельном потоке
             new Thread(() =>
             {
-                Console.WriteLine("Console commands: click, dblclick, sendkeys <text>");
+                Log("Console commands: click, dblclick, sendkeys <text>");
                 while (true)
                 {
                     Console.Write("> ");
